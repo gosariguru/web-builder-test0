@@ -27,22 +27,69 @@
     .delete { flex-shrink: 0; padding: 7px 10px; background: #fff0f0; color: #c65a64; font-size: 12px; }
     .delete:hover { background: #ffe1e1; }
     .empty { padding: 35px 0 20px; text-align: center; color: #939cad; font-size: 14px; }
+    /* A soft little page for everyday plans. */
+    :root { color-scheme: light; --background: #FFF9F9; --accent: #B86B7B; --card: #FFFFFF; --text: #4A3E3D; }
+    body { background: var(--background); color: var(--text); padding: 64px 20px 36px; background-image: radial-gradient(circle at 10% 15%, #f9e5e9 0, transparent 27%), radial-gradient(circle at 92% 80%, #f8ece1 0, transparent 28%); }
+    main { position: relative; max-width: 620px; padding: 42px; border: 1px solid #f2dfe3; border-radius: 32px; background: var(--card); box-shadow: 0 18px 65px #b86b7b12, 0 4px 12px #b86b7b06; }
+    main::before { content: ''; position: absolute; width: 100px; height: 26px; top: -13px; left: calc(50% - 50px); background: #f4dce3b3; transform: rotate(-4deg); border-left: 2px dotted #fff9f9; border-right: 2px dotted #fff9f9; }
+    .intro { text-align: center; }
+    .flower { display: grid; place-items: center; margin: 0 auto 16px; width: 64px; height: 64px; border-radius: 23px; background: #fff1f4; color: var(--accent); font-size: 42px; transform: rotate(-8deg); }
+    .eyebrow { display: inline-block; padding: 6px 12px; margin-bottom: 14px; border-radius: 20px; color: #965264; background: #fff4f6; font-size: 10px; letter-spacing: 1.8px; }
+    h1 { font-size: 32px; letter-spacing: -1.5px; }
+    .subtitle { margin: 10px 0 30px; color: #816c6a; font-size: 14px; line-height: 1.8; }
+    .input-label { display: block; margin-bottom: 10px; font-size: 13px; font-weight: 650; }
+    form { gap: 8px; padding: 7px; border: 1px solid #ecd7dc; border-radius: 18px; background: var(--background); }
+    input[type="text"] { border: 0; border-radius: 12px; padding: 12px 10px; color: var(--text); background: transparent; font-size: 14px; }
+    input[type="text"]::placeholder { color: #957c80; }
+    button { transition: background .18s ease, transform .18s ease; }
+    .add { padding: 0 20px; border-radius: 13px; background: var(--accent); box-shadow: 0 3px 0 #995365; font-size: 14px; }
+    .add:hover { background: #a85b6c; transform: translateY(-1px); }
+    .add:active { transform: translateY(1px); }
+    :focus-visible { outline: 3px solid #b86b7b; outline-offset: 3px; }
+    .list-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 28px 0 14px; }
+    .list-heading h2 { margin: 0; font-size: 14px; }
+    .summary { margin: 0; padding: 6px 10px; border-radius: 20px; color: #81616a; background: #fff3f5; font-size: 11px; }
+    ul { display: grid; gap: 10px; }
+    li { padding: 14px; border: 1px solid #f0e1e4; border-radius: 16px; background: var(--card); box-shadow: 0 3px 9px #b86b7b05; }
+    li.completed { border-color: #ead3db; }
+    input[type="checkbox"] { appearance: none; display: grid; place-content: center; width: 22px; height: 22px; border: 2px solid #d8b5bf; border-radius: 8px; background: white; }
+    input[type="checkbox"]::before { content: ''; width: 9px; height: 5px; border-left: 2px solid white; border-bottom: 2px solid white; transform: rotate(-45deg) scale(0); margin-top: -3px; }
+    input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+    input[type="checkbox"]:checked::before { transform: rotate(-45deg) scale(1); }
+    .task-text { font-size: 14px; }
+    li.completed .task-text { color: #947e82; text-decoration-color: #b86b7b; text-decoration-thickness: 1.5px; }
+    .delete { border-radius: 9px; background: #fff2f5; color: #985365; }
+    .delete:hover { background: #f7dfe6; }
+    .empty { margin: 0; padding: 34px 12px; border: 1px dashed #ead2d9; border-radius: 20px; background: #fffafa; color: #816c6a; line-height: 1.9; }
+    .empty-icon { display: block; margin-bottom: 9px; color: var(--accent); font-size: 32px; }
+    .empty strong { display: block; margin-bottom: 4px; color: var(--text); font-size: 14px; font-weight: 600; }
+    .empty small { font-size: 12px; }
+    .footer-note { margin: 26px 0 0; text-align: center; color: #8d7378; font-size: 11px; letter-spacing: .3px; }
     [hidden] { display: none; }
-    @media (max-width: 480px) { body { padding: 32px 16px; } main { padding: 26px 20px; } .add { padding: 0 18px; } }
+    @media (max-width: 480px) { body { padding: 36px 14px; } main { padding: 32px 20px 26px; border-radius: 26px; } h1 { font-size: 28px; } .add { padding: 0 15px; } input[type="text"] { font-size: 16px; } .summary { font-size: 10px; } }
+    @media (prefers-reduced-motion: reduce) { button { transition: none; } }
   </style>
 </head>
 <body>
   <main>
-    <p class="eyebrow">ONE THING AT A TIME</p>
-    <h1>오늘의 할 일</h1>
-    <p class="subtitle">작은 일부터 하나씩, 가볍게 시작해 보세요.</p>
+    <header class="intro">
+      <div class="flower" aria-hidden="true">✿</div>
+      <p class="eyebrow">MY LITTLE DAILY LIST</p>
+      <h1>오늘의 할 일</h1>
+      <p class="subtitle">작은 일 하나, 뿌듯함 한 스푼.<br>오늘도 나만의 속도로 채워가요.</p>
+    </header>
+    <label class="input-label" for="task-input">오늘은 무엇을 해볼까요?</label>
     <form id="task-form">
       <input id="task-input" type="text" aria-label="새로운 할 일" placeholder="어떤 일을 할 예정인가요?" autocomplete="off" required>
-      <button class="add" type="submit">추가</button>
+      <button class="add" type="submit"><span aria-hidden="true">＋ </span>추가</button>
     </form>
-    <p class="summary" id="summary" role="status" aria-live="polite">전체 0개 · 완료 0개</p>
+    <div class="list-heading">
+      <h2>나의 작은 계획들 <span aria-hidden="true">♡</span></h2>
+      <p class="summary" id="summary" role="status" aria-live="polite">전체 0개 · 완료 0개</p>
+    </div>
     <ul id="task-list" aria-label="할 일 목록"></ul>
-    <p class="empty" id="empty">아직 할 일이 없어요. 첫 할 일을 추가해 보세요.</p>
+    <p class="empty" id="empty"><span class="empty-icon" aria-hidden="true">♧</span><strong>새로운 하루, 비워둔 한 페이지</strong><small>첫 번째 할 일을 적어보세요.<br>작은 시작도 충분히 멋져요!</small></p>
+    <p class="footer-note">하나씩 해내는 당신을 응원해요 <span aria-hidden="true">♡</span></p>
   </main>
   <script>
     const form = document.querySelector('#task-form');
