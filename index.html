@@ -88,6 +88,7 @@
       <p class="summary" id="summary" role="status" aria-live="polite">전체 0개 · 완료 0개</p>
     </div>
     <ul id="task-list" aria-label="할 일 목록"></ul>
+    <p id="storage-message" role="status" hidden style="color: #985365; font-size: 12px; line-height: 1.6;"></p>
     <p class="empty" id="empty"><span class="empty-icon" aria-hidden="true">♧</span><strong>새로운 하루, 비워둔 한 페이지</strong><small>첫 번째 할 일을 적어보세요.<br>작은 시작도 충분히 멋져요!</small></p>
     <p class="footer-note">하나씩 해내는 당신을 응원해요 <span aria-hidden="true">♡</span></p>
   </main>
@@ -97,6 +98,26 @@
     const list = document.querySelector('#task-list');
     const summary = document.querySelector('#summary');
     const empty = document.querySelector('#empty');
+    const storageMessage = document.querySelector('#storage-message');
+    const STORAGE_KEY = 'today-todo.tasks.v1';
+
+    function showStorageMessage(message) {
+      storageMessage.textContent = message;
+      storageMessage.hidden = !message;
+    }
+
+    function saveTasks() {
+      const tasks = Array.from(list.children, (item) => ({
+        text: item.querySelector('.task-text').textContent,
+        completed: item.querySelector('input').checked
+      }));
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+        showStorageMessage('');
+      } catch {
+        showStorageMessage('브라우저에 저장하지 못했어요. 새로고침하면 변경 사항이 사라질 수 있어요.');
+      }
+    }
 
     function updateSummary() {
       const total = list.children.length;
@@ -105,15 +126,13 @@
       empty.hidden = total > 0;
     }
 
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const text = input.value.trim();
-      if (!text) { input.focus(); return; }
-
+    function addTask(text, completed = false) {
       const item = document.createElement('li');
       const label = document.createElement('label');
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
+      checkbox.checked = completed;
+      item.classList.toggle('completed', completed);
       const taskText = document.createElement('span');
       taskText.className = 'task-text';
       taskText.textContent = text;
@@ -126,20 +145,45 @@
       checkbox.addEventListener('change', () => {
         item.classList.toggle('completed', checkbox.checked);
         updateSummary();
+        saveTasks();
       });
       deleteButton.addEventListener('click', () => {
         item.remove();
         updateSummary();
+        saveTasks();
         input.focus();
       });
 
       label.append(checkbox, taskText);
       item.append(label, deleteButton);
       list.append(item);
+    }
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text) { input.focus(); return; }
+      addTask(text);
       input.value = '';
       input.focus();
       updateSummary();
+      saveTasks();
     });
+
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored !== null) {
+        const tasks = JSON.parse(stored);
+        if (!Array.isArray(tasks) || !tasks.every((task) =>
+          task && typeof task.text === 'string' && task.text.trim() &&
+          typeof task.completed === 'boolean'
+        )) throw new Error('Invalid saved tasks');
+        tasks.forEach((task) => addTask(task.text, task.completed));
+      }
+    } catch {
+      showStorageMessage('저장된 할 일을 불러오지 못했어요. 브라우저 저장 설정을 확인해 주세요.');
+    }
+    updateSummary();
   </script>
 </body>
 </html>
