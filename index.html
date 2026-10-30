@@ -65,6 +65,21 @@
     .empty strong { display: block; margin-bottom: 4px; color: var(--text); font-size: 14px; font-weight: 600; }
     .empty small { font-size: 12px; }
     .footer-note { margin: 26px 0 0; text-align: center; color: #8d7378; font-size: 11px; letter-spacing: .3px; }
+    .account-bar { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; font-size: 12px; color: #81616a; }
+    .soft-button { padding: 9px 13px; background: #fff2f5; color: #985365; }
+    h1 { overflow-wrap: anywhere; }
+    dialog { width: calc(100% - 32px); max-width: 420px; padding: 28px; border: 1px solid #ecd7dc; border-radius: 24px; background: var(--card); color: var(--text); box-shadow: 0 20px 80px #4a3e3d25; }
+    dialog::backdrop { background: #4a3e3d55; }
+    .dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .dialog-heading h2 { margin: 0; font-size: 22px; }
+    .auth-form { display: grid; padding: 0; border: 0; background: transparent; gap: 14px; }
+    .auth-form label { display: grid; gap: 7px; font-size: 13px; }
+    .auth-form input { width: 100%; min-width: 0; padding: 12px; border: 1px solid #ecd7dc; border-radius: 12px; background: var(--background); color: var(--text); font: inherit; }
+    .auth-form .add { padding: 13px; margin-top: 4px; }
+    .auth-form button:disabled { opacity: .6; cursor: wait; }
+    .auth-note, .auth-switch { font-size: 12px; line-height: 1.8; color: #816c6a; }
+    .auth-switch a { color: #985365; font-weight: 600; }
+    #auth-message { font-size: 13px; line-height: 1.7; color: #985365; }
     [hidden] { display: none; }
     @media (max-width: 480px) { body { padding: 36px 14px; } main { padding: 32px 20px 26px; border-radius: 26px; } h1 { font-size: 28px; } .add { padding: 0 15px; } input[type="text"] { font-size: 16px; } .summary { font-size: 10px; } }
     @media (prefers-reduced-motion: reduce) { button { transition: none; } }
@@ -72,10 +87,15 @@
 </head>
 <body>
   <main>
+    <div class="account-bar">
+      <span id="account-status">게스트로 이용 중</span>
+      <button type="button" class="soft-button" id="open-login">로그인</button>
+      <button type="button" class="soft-button" id="logout" hidden>로그아웃</button>
+    </div>
     <header class="intro">
       <div class="flower" aria-hidden="true">✿</div>
       <p class="eyebrow">MY LITTLE DAILY LIST</p>
-      <h1>오늘의 할 일</h1>
+      <h1 id="page-title">오늘의 할 일</h1>
       <p class="subtitle">작은 일 하나, 뿌듯함 한 스푼.<br>오늘도 나만의 속도로 채워가요.</p>
     </header>
     <label class="input-label" for="task-input">오늘은 무엇을 해볼까요?</label>
@@ -92,6 +112,21 @@
     <p class="empty" id="empty"><span class="empty-icon" aria-hidden="true">♧</span><strong>새로운 하루, 비워둔 한 페이지</strong><small>첫 번째 할 일을 적어보세요.<br>작은 시작도 충분히 멋져요!</small></p>
     <p class="footer-note">하나씩 해내는 당신을 응원해요 <span aria-hidden="true">♡</span></p>
   </main>
+  <dialog id="auth-dialog" aria-labelledby="auth-title" aria-describedby="auth-note">
+    <div class="dialog-heading">
+      <h2 id="auth-title">로그인</h2>
+      <button type="button" class="soft-button" id="close-auth" aria-label="로그인 창 닫기">닫기</button>
+    </div>
+    <p class="auth-note" id="auth-note"></p>
+    <form class="auth-form" id="auth-form">
+      <label>이메일<input type="email" id="auth-email" autocomplete="username" maxlength="254" required></label>
+      <label id="username-field" hidden>사용자명<input type="text" id="auth-username" autocomplete="nickname" maxlength="30"></label>
+      <label>비밀번호<input type="password" id="auth-password" autocomplete="current-password" required></label>
+      <button type="submit" class="add" id="auth-submit">로그인</button>
+    </form>
+    <p id="auth-message" role="status" aria-live="polite"></p>
+    <p class="auth-switch"><span id="auth-switch-label">아직 계정이 없나요?</span> <a href="#signup" id="auth-switch">회원가입</a></p>
+  </dialog>
   <script>
     const form = document.querySelector('#task-form');
     const input = document.querySelector('#task-input');
@@ -99,7 +134,136 @@
     const summary = document.querySelector('#summary');
     const empty = document.querySelector('#empty');
     const storageMessage = document.querySelector('#storage-message');
-    const STORAGE_KEY = 'today-todo.tasks.v1';
+    const GUEST_KEY = 'today-todo.tasks.v1';
+    const USERS_KEY = 'today-todo.users.v1';
+    const SESSION_KEY = 'today-todo.session.v1';
+    let currentUser = null;
+    let authMode = 'login';
+    let authBusy = false;
+    const authDialog = document.querySelector('#auth-dialog');
+    const authForm = document.querySelector('#auth-form');
+    const authEmail = document.querySelector('#auth-email');
+    const authUsername = document.querySelector('#auth-username');
+    const authPassword = document.querySelector('#auth-password');
+    const authMessage = document.querySelector('#auth-message');
+    const authSubmit = document.querySelector('#auth-submit');
+
+    function taskKey() {
+      return currentUser ? `today-todo.tasks.user.${currentUser.id}` : GUEST_KEY;
+    }
+
+    function readUsers() {
+      const users = JSON.parse(localStorage.getItem(USERS_KEY) || '[]');
+      if (!Array.isArray(users) || !users.every(user =>
+        user && typeof user.id === 'string' && typeof user.email === 'string' &&
+        typeof user.username === 'string' && typeof user.salt === 'string' &&
+        typeof user.passwordHash === 'string'
+      )) throw new Error('계정 데이터를 읽을 수 없어요. 브라우저 저장 설정을 확인해 주세요.');
+      return users;
+    }
+
+    // A browser-only demo, not server-enforced authentication.
+    async function hashPassword(password, salt) {
+      if (!globalThis.crypto?.subtle) throw new Error('이 브라우저에서는 로그인을 지원하지 않아요. HTTPS 또는 localhost에서 열어 주세요.');
+      const encoder = new TextEncoder();
+      const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
+      const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: encoder.encode(salt), iterations: 600000, hash: 'SHA-256' }, key, 256);
+      return Array.from(new Uint8Array(bits), byte => byte.toString(16).padStart(2, '0')).join('');
+    }
+
+    function updateAccount() {
+      document.querySelector('#page-title').textContent = currentUser ? `${currentUser.username}님의 To-Do List` : '오늘의 할 일';
+      document.querySelector('#account-status').textContent = currentUser ? '로그인됨 · 브라우저 체험용' : '게스트로 이용 중';
+      document.querySelector('#open-login').hidden = !!currentUser;
+      document.querySelector('#logout').hidden = !currentUser;
+    }
+
+    function setAuthMode(mode) {
+      authMode = mode;
+      const signup = mode === 'signup';
+      document.querySelector('#auth-title').textContent = signup ? '회원가입' : '로그인';
+      document.querySelector('#username-field').hidden = !signup;
+      authUsername.required = signup;
+      authPassword.minLength = signup ? 8 : 1;
+      authPassword.autocomplete = signup ? 'new-password' : 'current-password';
+      authSubmit.textContent = signup ? '회원가입' : '로그인';
+      document.querySelector('#auth-switch-label').textContent = signup ? '이미 계정이 있나요?' : '아직 계정이 없나요?';
+      document.querySelector('#auth-switch').textContent = signup ? '로그인' : '회원가입';
+      document.querySelector('#auth-switch').href = signup ? '#login' : '#signup';
+      document.querySelector('#auth-note').textContent = '이 브라우저에만 저장되는 체험용 계정이에요. 이메일 인증이나 기기 간 연동은 지원하지 않아요. 다른 서비스의 비밀번호는 사용하지 마세요.';
+      authMessage.textContent = signup ? '비밀번호는 8자 이상 입력해 주세요.' : '';
+      authPassword.value = '';
+    }
+
+    document.querySelector('#open-login').addEventListener('click', () => {
+      authForm.reset();
+      setAuthMode('login');
+      authDialog.showModal();
+      authEmail.focus();
+    });
+    document.querySelector('#close-auth').addEventListener('click', () => {
+      if (!authBusy) authDialog.close();
+    });
+    authDialog.addEventListener('cancel', event => { if (authBusy) event.preventDefault(); });
+    authDialog.addEventListener('close', () => { authPassword.value = ''; });
+    document.querySelector('#auth-switch').addEventListener('click', event => {
+      event.preventDefault();
+      if (!authBusy) setAuthMode(authMode === 'login' ? 'signup' : 'login');
+    });
+    authForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (authBusy) return;
+      authBusy = true;
+      authSubmit.disabled = true;
+      document.querySelector('#close-auth').disabled = true;
+      const email = authEmail.value.trim().toLowerCase();
+      const password = authPassword.value;
+      try {
+        authMessage.textContent = '잠시만 기다려 주세요…';
+        let users = readUsers();
+        if (authMode === 'signup') {
+          const username = authUsername.value.trim();
+          if (!username || username.length > 30) throw new Error('사용자명을 1~30자로 입력해 주세요.');
+          if (password.length < 8) throw new Error('비밀번호는 8자 이상 입력해 주세요.');
+          if (users.some(user => user.email === email)) throw new Error('이미 가입한 이메일이에요. 로그인해 주세요.');
+          const salt = crypto.randomUUID();
+          const passwordHash = await hashPassword(password, salt);
+          users = readUsers();
+          if (users.some(user => user.email === email)) throw new Error('이미 가입한 이메일이에요. 로그인해 주세요.');
+          users.push({ id: crypto.randomUUID(), email, username, salt, passwordHash });
+          localStorage.setItem(USERS_KEY, JSON.stringify(users));
+          setAuthMode('login');
+          authMessage.textContent = '회원가입이 완료됐어요! 가입한 이메일과 비밀번호로 로그인해 주세요.';
+          authPassword.focus();
+        } else {
+          const user = users.find(user => user.email === email);
+          if (!user || await hashPassword(password, user.salt) !== user.passwordHash) throw new Error('이메일 또는 비밀번호를 확인해 주세요.');
+          sessionStorage.setItem(SESSION_KEY, user.id);
+          currentUser = user;
+          updateAccount();
+          loadTasks();
+          input.value = '';
+          authDialog.close();
+          input.focus();
+        }
+      } catch (error) {
+        authMessage.textContent = error instanceof Error && error.message && !(error instanceof DOMException)
+          ? error.message : '계정을 저장하거나 불러오지 못했어요. 브라우저 저장 설정을 확인해 주세요.';
+      } finally {
+        authPassword.value = '';
+        authBusy = false;
+        authSubmit.disabled = false;
+        document.querySelector('#close-auth').disabled = false;
+      }
+    });
+    document.querySelector('#logout').addEventListener('click', () => {
+      try { sessionStorage.removeItem(SESSION_KEY); }
+      catch { showStorageMessage('로그아웃하지 못했어요. 브라우저 저장 설정을 확인해 주세요.'); return; }
+      currentUser = null;
+      input.value = '';
+      updateAccount();
+      loadTasks();
+    });
 
     function showStorageMessage(message) {
       storageMessage.textContent = message;
@@ -112,7 +276,7 @@
         completed: item.querySelector('input').checked
       }));
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+        localStorage.setItem(taskKey(), JSON.stringify(tasks));
         showStorageMessage('');
       } catch {
         showStorageMessage('브라우저에 저장하지 못했어요. 새로고침하면 변경 사항이 사라질 수 있어요.');
@@ -170,8 +334,11 @@
       saveTasks();
     });
 
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
+    function loadTasks() {
+      list.replaceChildren();
+      showStorageMessage('');
+      try {
+      const stored = localStorage.getItem(taskKey());
       if (stored !== null) {
         const tasks = JSON.parse(stored);
         if (!Array.isArray(tasks) || !tasks.every((task) =>
@@ -184,6 +351,14 @@
       showStorageMessage('저장된 할 일을 불러오지 못했어요. 브라우저 저장 설정을 확인해 주세요.');
     }
     updateSummary();
+    }
+
+    try {
+      const userId = sessionStorage.getItem(SESSION_KEY);
+      if (userId) currentUser = readUsers().find(user => user.id === userId) || null;
+    } catch { /* Keep guest tasks usable when account storage is unavailable. */ }
+    updateAccount();
+    loadTasks();
   </script>
 </body>
 </html>
