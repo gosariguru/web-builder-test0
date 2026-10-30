@@ -100,11 +100,11 @@
     </header>
     <label class="input-label" for="task-input">오늘은 무엇을 해볼까요?</label>
     <form id="task-form">
-      <input id="task-input" type="text" aria-label="새로운 할 일" placeholder="어떤 일을 할 예정인가요?" autocomplete="off" required>
+      <input id="task-input" type="text" aria-label="새로운 할 일" placeholder="어떤 일을 할 예정인가요?" autocomplete="off" maxlength="2000" required>
       <button class="add" type="submit"><span aria-hidden="true">＋ </span>추가</button>
     </form>
     <div class="list-heading">
-      <h2>나의 작은 계획들 <span aria-hidden="true">♡</span></h2>
+      <h2>나의 작은 계획들 <span aria-hidden="true">♡</span></h2><button type="button" class="soft-button" id="reload-tasks" aria-label="할 일 다시 불러오기">새로고침</button>
       <p class="summary" id="summary" role="status" aria-live="polite">전체 0개 · 완료 0개</p>
     </div>
     <ul id="task-list" aria-label="할 일 목록"></ul>
@@ -127,238 +127,179 @@
     <p id="auth-message" role="status" aria-live="polite"></p>
     <p class="auth-switch"><span id="auth-switch-label">아직 계정이 없나요?</span> <a href="#signup" id="auth-switch">회원가입</a></p>
   </dialog>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script>
-    const form = document.querySelector('#task-form');
-    const input = document.querySelector('#task-input');
-    const list = document.querySelector('#task-list');
-    const summary = document.querySelector('#summary');
-    const empty = document.querySelector('#empty');
-    const storageMessage = document.querySelector('#storage-message');
-    const GUEST_KEY = 'today-todo.tasks.v1';
-    const USERS_KEY = 'today-todo.users.v1';
-    const SESSION_KEY = 'today-todo.session.v1';
-    let currentUser = null;
-    let authMode = 'login';
-    let authBusy = false;
-    const authDialog = document.querySelector('#auth-dialog');
-    const authForm = document.querySelector('#auth-form');
-    const authEmail = document.querySelector('#auth-email');
-    const authUsername = document.querySelector('#auth-username');
-    const authPassword = document.querySelector('#auth-password');
-    const authMessage = document.querySelector('#auth-message');
-    const authSubmit = document.querySelector('#auth-submit');
+    const SUPABASE_URL = 'https://xbgjdyqjadwtneoowssm.supabase.co';
+    const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_QOaG4X8ET9U9-fkbb8DzZA_tFgj6hu-';
+    const APP_URL = 'https://web-builder-test0-16ye9i931-ej-adab.vercel.app/';
+    const $ = selector => document.querySelector(selector);
+    const form = $('#task-form'), input = $('#task-input'), list = $('#task-list');
+    const dialog = $('#auth-dialog'), authForm = $('#auth-form');
+    const emailInput = $('#auth-email'), usernameInput = $('#auth-username'), passwordInput = $('#auth-password');
+    const authMessage = $('#auth-message'), submitButton = $('#auth-submit');
+    let client, user = null, tasks = [], mode = 'login', authBusy = false, taskBusy = false;
+    let generation = 0, loadVersion = 0;
+    const fields = 'id,text,completed,created_at';
 
-    function taskKey() {
-      return currentUser ? `today-todo.tasks.user.${currentUser.id}` : GUEST_KEY;
+    function message(text = '') {
+      $('#storage-message').textContent = text;
+      $('#storage-message').hidden = !text;
     }
-
-    function readUsers() {
-      const users = JSON.parse(localStorage.getItem(USERS_KEY) || '[]');
-      if (!Array.isArray(users) || !users.every(user =>
-        user && typeof user.id === 'string' && typeof user.email === 'string' &&
-        typeof user.username === 'string' && typeof user.salt === 'string' &&
-        typeof user.passwordHash === 'string'
-      )) throw new Error('계정 데이터를 읽을 수 없어요. 브라우저 저장 설정을 확인해 주세요.');
-      return users;
+    function errorText(error) {
+      if (error?.code === 'PGRST205' || error?.code === '42P01') return '할 일 테이블이 아직 준비되지 않았어요. Supabase SQL 마이그레이션을 실행해 주세요.';
+      if (error?.code === 'email_not_confirmed') return '이메일의 인증 링크를 먼저 확인해 주세요.';
+      if (error?.code === 'invalid_credentials') return '이메일 또는 비밀번호를 확인해 주세요.';
+      if (error?.code === 'user_already_exists') return '이미 가입한 이메일이에요. 로그인해 주세요.';
+      return error?.message || '요청을 처리하지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.';
     }
-
-    // A browser-only demo, not server-enforced authentication.
-    async function hashPassword(password, salt) {
-      if (!globalThis.crypto?.subtle) throw new Error('이 브라우저에서는 로그인을 지원하지 않아요. HTTPS 또는 localhost에서 열어 주세요.');
-      const encoder = new TextEncoder();
-      const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
-      const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: encoder.encode(salt), iterations: 600000, hash: 'SHA-256' }, key, 256);
-      return Array.from(new Uint8Array(bits), byte => byte.toString(16).padStart(2, '0')).join('');
+    function controls() {
+      input.disabled = !client || !user || taskBusy;
+      form.querySelector('button').disabled = input.disabled;
+      $('#logout').disabled = authBusy || taskBusy;
+      $('#open-login').disabled = !client || authBusy;
     }
-
-    function updateAccount() {
-      document.querySelector('#page-title').textContent = currentUser ? `${currentUser.username}님의 To-Do List` : '오늘의 할 일';
-      document.querySelector('#account-status').textContent = currentUser ? '로그인됨 · 브라우저 체험용' : '게스트로 이용 중';
-      document.querySelector('#open-login').hidden = !!currentUser;
-      document.querySelector('#logout').hidden = !currentUser;
+    function render() {
+      list.replaceChildren();
+      for (const task of tasks) {
+        const item = document.createElement('li'), label = document.createElement('label');
+        const checkbox = document.createElement('input'), text = document.createElement('span'), remove = document.createElement('button');
+        checkbox.type = 'checkbox'; checkbox.checked = task.completed; checkbox.disabled = taskBusy;
+        item.classList.toggle('completed', task.completed);
+        text.className = 'task-text'; text.textContent = task.text;
+        remove.type = 'button'; remove.className = 'delete'; remove.textContent = '삭제'; remove.disabled = taskBusy;
+        remove.setAttribute('aria-label', `${task.text} 삭제`);
+        checkbox.addEventListener('change', () => {
+          const completed = checkbox.checked;
+          checkbox.checked = task.completed;
+          mutate(() => client.from('todos').update({ completed }).eq('id', task.id).eq('user_id', user.id).select(fields).single(),
+            data => { tasks = tasks.map(row => row.id === data.id ? data : row); });
+        });
+        remove.addEventListener('click', () => mutate(
+          () => client.from('todos').delete().eq('id', task.id).eq('user_id', user.id).select('id').single(),
+          data => { tasks = tasks.filter(row => row.id !== data.id); }));
+        label.append(checkbox, text); item.append(label, remove); list.append(item);
+      }
+      $('#summary').textContent = `전체 ${tasks.length}개 · 완료 ${tasks.filter(task => task.completed).length}개`;
+      $('#empty').hidden = tasks.length > 0;
+      $('#page-title').textContent = user ? `${user.user_metadata?.username || user.user_metadata?.name || user.email?.split('@')[0] || '사용자'}님의 To-Do List` : '오늘의 할 일';
+      $('#account-status').textContent = user ? '로그인됨 · 클라우드 저장' : '로그인 후 이용해 주세요';
+      $('#open-login').hidden = !!user; $('#logout').hidden = !user;
+      input.placeholder = user ? '어떤 일을 할 예정인가요?' : '로그인하면 나의 할 일을 저장할 수 있어요';
+      controls();
     }
-
-    function setAuthMode(mode) {
-      authMode = mode;
-      const signup = mode === 'signup';
-      document.querySelector('#auth-title').textContent = signup ? '회원가입' : '로그인';
-      document.querySelector('#username-field').hidden = !signup;
-      authUsername.required = signup;
-      authPassword.minLength = signup ? 8 : 1;
-      authPassword.autocomplete = signup ? 'new-password' : 'current-password';
-      authSubmit.textContent = signup ? '회원가입' : '로그인';
-      document.querySelector('#auth-switch-label').textContent = signup ? '이미 계정이 있나요?' : '아직 계정이 없나요?';
-      document.querySelector('#auth-switch').textContent = signup ? '로그인' : '회원가입';
-      document.querySelector('#auth-switch').href = signup ? '#login' : '#signup';
-      document.querySelector('#auth-note').textContent = '이 브라우저에만 저장되는 체험용 계정이에요. 이메일 인증이나 기기 간 연동은 지원하지 않아요. 다른 서비스의 비밀번호는 사용하지 마세요.';
-      authMessage.textContent = signup ? '비밀번호는 8자 이상 입력해 주세요.' : '';
-      authPassword.value = '';
-    }
-
-    document.querySelector('#open-login').addEventListener('click', () => {
-      authForm.reset();
-      setAuthMode('login');
-      authDialog.showModal();
-      authEmail.focus();
-    });
-    document.querySelector('#close-auth').addEventListener('click', () => {
-      if (!authBusy) authDialog.close();
-    });
-    authDialog.addEventListener('cancel', event => { if (authBusy) event.preventDefault(); });
-    authDialog.addEventListener('close', () => { authPassword.value = ''; });
-    document.querySelector('#auth-switch').addEventListener('click', event => {
-      event.preventDefault();
-      if (!authBusy) setAuthMode(authMode === 'login' ? 'signup' : 'login');
-    });
-    authForm.addEventListener('submit', async event => {
-      event.preventDefault();
-      if (authBusy) return;
-      authBusy = true;
-      authSubmit.disabled = true;
-      document.querySelector('#close-auth').disabled = true;
-      const email = authEmail.value.trim().toLowerCase();
-      const password = authPassword.value;
+    async function loadTasks() {
+      const version = ++loadVersion, owner = user?.id, epoch = generation;
+      if (!owner) return;
+      taskBusy = true; render(); message('할 일을 불러오고 있어요…');
       try {
-        authMessage.textContent = '잠시만 기다려 주세요…';
-        let users = readUsers();
-        if (authMode === 'signup') {
-          const username = authUsername.value.trim();
-          if (!username || username.length > 30) throw new Error('사용자명을 1~30자로 입력해 주세요.');
-          if (password.length < 8) throw new Error('비밀번호는 8자 이상 입력해 주세요.');
-          if (users.some(user => user.email === email)) throw new Error('이미 가입한 이메일이에요. 로그인해 주세요.');
-          const salt = crypto.randomUUID();
-          const passwordHash = await hashPassword(password, salt);
-          users = readUsers();
-          if (users.some(user => user.email === email)) throw new Error('이미 가입한 이메일이에요. 로그인해 주세요.');
-          users.push({ id: crypto.randomUUID(), email, username, salt, passwordHash });
-          localStorage.setItem(USERS_KEY, JSON.stringify(users));
-          setAuthMode('login');
-          authMessage.textContent = '회원가입이 완료됐어요! 가입한 이메일과 비밀번호로 로그인해 주세요.';
-          authPassword.focus();
-        } else {
-          const user = users.find(user => user.email === email);
-          if (!user || await hashPassword(password, user.salt) !== user.passwordHash) throw new Error('이메일 또는 비밀번호를 확인해 주세요.');
-          sessionStorage.setItem(SESSION_KEY, user.id);
-          currentUser = user;
-          updateAccount();
-          loadTasks();
-          input.value = '';
-          authDialog.close();
-          input.focus();
-        }
+        const { data, error } = await client.from('todos').select(fields).eq('user_id', owner).order('created_at').order('id');
+        if (error) throw error;
+        if (version !== loadVersion || epoch !== generation) return;
+        tasks = data; message();
       } catch (error) {
-        authMessage.textContent = error instanceof Error && error.message && !(error instanceof DOMException)
-          ? error.message : '계정을 저장하거나 불러오지 못했어요. 브라우저 저장 설정을 확인해 주세요.';
+        if (version === loadVersion && epoch === generation) message(errorText(error));
       } finally {
-        authPassword.value = '';
-        authBusy = false;
-        authSubmit.disabled = false;
-        document.querySelector('#close-auth').disabled = false;
+        if (version === loadVersion && epoch === generation) { taskBusy = false; render(); }
       }
-    });
-    document.querySelector('#logout').addEventListener('click', () => {
-      try { sessionStorage.removeItem(SESSION_KEY); }
-      catch { showStorageMessage('로그아웃하지 못했어요. 브라우저 저장 설정을 확인해 주세요.'); return; }
-      currentUser = null;
-      input.value = '';
-      updateAccount();
-      loadTasks();
-    });
-
-    function showStorageMessage(message) {
-      storageMessage.textContent = message;
-      storageMessage.hidden = !message;
     }
-
-    function saveTasks() {
-      const tasks = Array.from(list.children, (item) => ({
-        text: item.querySelector('.task-text').textContent,
-        completed: item.querySelector('input').checked
-      }));
+    async function mutate(request, apply) {
+      if (!user || taskBusy) return;
+      const epoch = generation;
+      taskBusy = true; render(); message();
       try {
-        localStorage.setItem(taskKey(), JSON.stringify(tasks));
-        showStorageMessage('');
-      } catch {
-        showStorageMessage('브라우저에 저장하지 못했어요. 새로고침하면 변경 사항이 사라질 수 있어요.');
+        const { data, error } = await request();
+        if (error) throw error;
+        if (epoch === generation) apply(data);
+      } catch (error) { if (epoch === generation) message(errorText(error)); }
+      finally { if (epoch === generation) { taskBusy = false; render(); } }
+    }
+    function acceptSession(session) {
+      const next = session?.user || null, changed = user?.id !== next?.id;
+      user = next;
+      if (changed) {
+        generation++; loadVersion++; tasks = []; taskBusy = false; input.value = ''; message();
       }
+      render();
+      // Auth callbacks remain synchronous; database calls run after the auth lock is released.
+      if (changed && user) setTimeout(() => { loadTasks(); }, 0);
     }
-
-    function updateSummary() {
-      const total = list.children.length;
-      const completed = list.querySelectorAll('input:checked').length;
-      summary.textContent = `전체 ${total}개 · 완료 ${completed}개`;
-      empty.hidden = total > 0;
-    }
-
-    function addTask(text, completed = false) {
-      const item = document.createElement('li');
-      const label = document.createElement('label');
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = completed;
-      item.classList.toggle('completed', completed);
-      const taskText = document.createElement('span');
-      taskText.className = 'task-text';
-      taskText.textContent = text;
-      const deleteButton = document.createElement('button');
-      deleteButton.type = 'button';
-      deleteButton.className = 'delete';
-      deleteButton.textContent = '삭제';
-      deleteButton.setAttribute('aria-label', `${text} 삭제`);
-
-      checkbox.addEventListener('change', () => {
-        item.classList.toggle('completed', checkbox.checked);
-        updateSummary();
-        saveTasks();
-      });
-      deleteButton.addEventListener('click', () => {
-        item.remove();
-        updateSummary();
-        saveTasks();
-        input.focus();
-      });
-
-      label.append(checkbox, taskText);
-      item.append(label, deleteButton);
-      list.append(item);
-    }
-
-    form.addEventListener('submit', (event) => {
+    form.addEventListener('submit', async event => {
       event.preventDefault();
       const text = input.value.trim();
-      if (!text) { input.focus(); return; }
-      addTask(text);
-      input.value = '';
-      input.focus();
-      updateSummary();
-      saveTasks();
+      if (!text || text.length > 2000) return;
+      await mutate(() => client.from('todos').insert({ text, completed: false }).select(fields).single(), data => {
+        tasks.push(data); input.value = '';
+      });
+      if (!input.disabled) input.focus();
     });
-
-    function loadTasks() {
-      list.replaceChildren();
-      showStorageMessage('');
+    function setMode(next) {
+      mode = next;
+      const signup = mode === 'signup';
+      $('#auth-title').textContent = signup ? '회원가입' : '로그인';
+      $('#username-field').hidden = !signup; usernameInput.required = signup;
+      passwordInput.minLength = signup ? 8 : 1;
+      passwordInput.autocomplete = signup ? 'new-password' : 'current-password';
+      passwordInput.value = '';
+      submitButton.textContent = signup ? '회원가입' : '로그인';
+      $('#auth-switch-label').textContent = signup ? '이미 계정이 있나요?' : '아직 계정이 없나요?';
+      $('#auth-switch').textContent = signup ? '로그인' : '회원가입';
+      $('#auth-switch').href = signup ? '#login' : '#signup';
+      $('#auth-note').textContent = signup ? '나만의 목록을 시작해 보세요. 비밀번호는 8자 이상 입력해 주세요.' : '가입한 이메일로 로그인하고, 어디서든 나의 할 일을 이어가세요.';
+      authMessage.textContent = '';
+    }
+    $('#open-login').addEventListener('click', () => { authForm.reset(); setMode('login'); dialog.showModal(); emailInput.focus(); });
+    $('#close-auth').addEventListener('click', () => { if (!authBusy) dialog.close(); });
+    dialog.addEventListener('cancel', event => { if (authBusy) event.preventDefault(); });
+    dialog.addEventListener('close', () => { passwordInput.value = ''; });
+    $('#auth-switch').addEventListener('click', event => { event.preventDefault(); if (!authBusy) setMode(mode === 'login' ? 'signup' : 'login'); });
+    authForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (authBusy || !client) return;
+      authBusy = true; submitButton.disabled = true; $('#close-auth').disabled = true; controls();
+      const email = emailInput.value.trim().toLowerCase(), password = passwordInput.value;
+      passwordInput.value = '';
       try {
-      const stored = localStorage.getItem(taskKey());
-      if (stored !== null) {
-        const tasks = JSON.parse(stored);
-        if (!Array.isArray(tasks) || !tasks.every((task) =>
-          task && typeof task.text === 'string' && task.text.trim() &&
-          typeof task.completed === 'boolean'
-        )) throw new Error('Invalid saved tasks');
-        tasks.forEach((task) => addTask(task.text, task.completed));
-      }
-    } catch {
-      showStorageMessage('저장된 할 일을 불러오지 못했어요. 브라우저 저장 설정을 확인해 주세요.');
+        authMessage.textContent = '처리 중…';
+        if (mode === 'signup') {
+          const username = usernameInput.value.trim();
+          if (!username || username.length > 30 || password.length < 8) throw new Error('사용자명은 1~30자, 비밀번호는 8자 이상 입력해 주세요.');
+          const { data, error } = await client.auth.signUp({ email, password, options: { data: { username }, emailRedirectTo: APP_URL } });
+          if (error) throw error;
+          if (data.session) { acceptSession(data.session); dialog.close(); }
+          else { setMode('login'); authMessage.textContent = '가입 요청을 받았어요. 이메일의 인증 링크를 확인한 뒤 로그인해 주세요. 이미 가입했다면 기존 계정으로 로그인해 주세요.'; }
+        } else {
+          const { data, error } = await client.auth.signInWithPassword({ email, password });
+          if (error) throw error;
+          acceptSession(data.session); dialog.close();
+        }
+      } catch (error) { authMessage.textContent = errorText(error); }
+      finally { authBusy = false; submitButton.disabled = false; $('#close-auth').disabled = false; controls(); }
+    });
+    $('#logout').addEventListener('click', async () => {
+      if (authBusy || taskBusy) return;
+      authBusy = true; controls();
+      try { const { error } = await client.auth.signOut(); if (error) throw error; acceptSession(null); }
+      catch (error) { message(errorText(error)); }
+      finally { authBusy = false; controls(); }
+    });
+    $('#reload-tasks').addEventListener('click', () => { if (!taskBusy && user) loadTasks(); });
+    async function initialize() {
+      render();
+      try {
+        if (!window.supabase) throw new Error('로그인 모듈을 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.');
+        client = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+          auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+        });
+        client.auth.onAuthStateChange((_event, session) => { acceptSession(session); });
+        const startGeneration = generation;
+        const { data, error } = await client.auth.getSession();
+        if (error) throw error;
+        if (generation === startGeneration) acceptSession(data.session);
+      } catch (error) { message(errorText(error)); }
+      controls();
     }
-    updateSummary();
-    }
-
-    try {
-      const userId = sessionStorage.getItem(SESSION_KEY);
-      if (userId) currentUser = readUsers().find(user => user.id === userId) || null;
-    } catch { /* Keep guest tasks usable when account storage is unavailable. */ }
-    updateAccount();
-    loadTasks();
+    initialize();
   </script>
+
 </body>
 </html>
